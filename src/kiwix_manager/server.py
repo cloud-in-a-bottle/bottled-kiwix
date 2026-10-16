@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -19,14 +20,17 @@ from kiwix_manager.services import Services
 
 
 def create_app(services: Services) -> "Dispatcher":
+    # httpx logs every request at INFO, which would log each proxied reader request and catalog thumbnail.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
     @asynccontextmanager
     async def lifespan(_: Litestar) -> AsyncIterator[None]:
-        services.library.initialize()
-        await asyncio.to_thread(services.library.reconcile)
-        services.downloads.start()
-        await services.kiwix.start()
-        logger.info("Kiwix manager started with {} books", len(services.library.books()))
         try:
+            services.library.initialize()
+            await asyncio.to_thread(services.library.reconcile)
+            services.downloads.start()
+            await services.kiwix.start()
+            logger.info("Kiwix manager started with {} books", len(services.library.books()))
             yield
         finally:
             await services.kiwix.stop()

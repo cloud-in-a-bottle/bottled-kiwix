@@ -19,7 +19,6 @@ dev = [
     "mypy",
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
-    "playwright",
     "types-defusedxml>=0.7.0.20260504",
 ]
 

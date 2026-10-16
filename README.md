@@ -50,7 +50,7 @@ the file, so it is noticeably slower until the JuiceFS cache warms up.
   unless the owner turns on public access.
 - State-changing manager requests must come from this app's own origin (`Origin` / `Sec-Fetch-Site`), since the
   owner's session cookie is shared with every app on the zone.
-- Only books from the Kiwix catalog can be downloaded, only via metalinks on `download.kiwix.org`, and every file is
+- Only books from the Kiwix catalog can be downloaded, only via metalinks served from `download.kiwix.org` hosts, and every file is
   verified against its SHA-256.
 - ZIM content is served from the same origin as the manager, so a ZIM file's scripts could use the manager as the
   owner. Only add ZIM files you trust; the Kiwix catalog is published by the openZIM project.

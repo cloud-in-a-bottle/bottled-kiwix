@@ -103,7 +103,7 @@ def parse_entries(text: str | bytes) -> CatalogPage:
     root = parse_xml(text)
     entries = tuple(entry for element in children(root, "entry") if (entry := _parse_entry(element)) is not None)
     return CatalogPage(
-        total=parse_int(child_text(root, "totalResults")) or len(entries),
+        total=parse_int(child_text(root, "totalResults")) if child(root, "totalResults") is not None else len(entries),
         start=parse_int(child_text(root, "startIndex")),
         entries=entries,
     )
