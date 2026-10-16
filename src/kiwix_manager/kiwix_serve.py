@@ -1,14 +1,20 @@
 import asyncio
 import contextlib
 import os
+import time
 from pathlib import Path
 
+import httpx
 from loguru import logger
+
+from kiwix_manager.catalog import parse_entry_ids
 
 RESTART_DELAY_SECONDS = 2.0
 MAX_RESTART_DELAY_SECONDS = 60.0
 # A run at least this long counts as healthy and resets the restart backoff.
 HEALTHY_RUN_SECONDS = 60.0
+# kiwix-serve polls the library file about once a second.
+LIBRARY_SYNC_TIMEOUT_SECONDS = 10.0
 
 
 class KiwixServe:
@@ -53,9 +59,14 @@ class KiwixServe:
         loop = asyncio.get_running_loop()
         while not self._stopping:
             started = loop.time()
-            self._process = await asyncio.create_subprocess_exec(*self._command())
-            logger.info("Started kiwix-serve (pid {})", self._process.pid)
-            code = await self._process.wait()
+            try:
+                self._process = await asyncio.create_subprocess_exec(*self._command())
+            except OSError as error:
+                logger.error("Could not start kiwix-serve: {}", error)
+                code = None
+            else:
+                logger.info("Started kiwix-serve (pid {})", self._process.pid)
+                code = await self._process.wait()
             if self._stopping:
                 return
             if loop.time() - started >= HEALTHY_RUN_SECONDS:
@@ -63,6 +74,30 @@ class KiwixServe:
             logger.error("kiwix-serve exited with code {}; restarting in {:.0f}s", code, delay)
             await asyncio.sleep(delay)
             delay = min(delay * 2, MAX_RESTART_DELAY_SECONDS)
+
+    def wait_for_books(self, expected_ids: frozenset[str]) -> None:
+        """Block until kiwix-serve serves exactly ``expected_ids``.
+
+        kiwix-serve reloads the library file on its own schedule, so without this a book could be reported as
+        installed (or deleted) a moment before the reader actually serves (or stops serving) it.
+        """
+        if not self.running:
+            # Not started yet (or restarting): it loads the current library file when it starts.
+            return
+        deadline = time.monotonic() + LIBRARY_SYNC_TIMEOUT_SECONDS
+        served: frozenset[str] = frozenset()
+        with httpx.Client(base_url=self.base_url, timeout=5.0) as client:
+            while time.monotonic() < deadline:
+                try:
+                    response = client.get("/catalog/v2/entries", params={"count": "100000"})
+                    if response.status_code == 200:
+                        served = parse_entry_ids(response.content)
+                        if served == expected_ids:
+                            return
+                except (httpx.HTTPError, SyntaxError) as error:
+                    logger.debug("Waiting for kiwix-serve: {}", error)
+                time.sleep(0.2)
+        logger.warning("kiwix-serve did not pick up the library change in time (serving {})", sorted(served))
 
     async def stop(self) -> None:
         self._stopping = True

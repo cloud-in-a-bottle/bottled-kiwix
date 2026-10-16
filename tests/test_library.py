@@ -72,3 +72,31 @@ def test_library_survives_reinitialize(
     reopened = Library(tmp_path / "data" / "library.xml", zim_dir, kiwix_manage_bin)
     reopened.initialize()
     assert [book.id for book in reopened.books()] == [TEST_ZIM_ID]
+
+
+def test_delete_refuses_paths_outside_zim_dir(library: Library, tmp_path: Path, test_zim: Path) -> None:
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    shutil.copy(test_zim, outside / test_zim.name)
+    library_file = tmp_path / "data" / "library.xml"
+    # Simulate a library entry pointing outside the ZIM directory (e.g. a hand-edited library file).
+    library_file.write_text(
+        f'<library version="20110515"><book id="{TEST_ZIM_ID}" path="{outside / test_zim.name}" title="x"/></library>'
+    )
+    with pytest.raises(LibraryError, match="outside the ZIM directory"):
+        library.delete(TEST_ZIM_ID)
+    assert (outside / test_zim.name).exists()
+
+
+def test_reconcile_waits_for_the_server(tmp_path: Path, test_zim: Path, kiwix_manage_bin: str) -> None:
+    seen: list[frozenset[str]] = []
+    data = tmp_path / "data"
+    data.mkdir()
+    zim_dir = tmp_path / "zims"
+    instance = Library(data / "library.xml", zim_dir, kiwix_manage_bin, wait_for_server=seen.append)
+    instance.initialize()
+    shutil.copy(test_zim, zim_dir / test_zim.name)
+    instance.reconcile()
+    (zim_dir / test_zim.name).unlink()
+    instance.reconcile()
+    assert seen == [frozenset({TEST_ZIM_ID}), frozenset()]

@@ -249,12 +249,15 @@ class DownloadManager:
                 raise DownloadError("no such download")
             if not job.active:
                 raise DownloadError("download is not in progress")
-            if self._current_id == job_id:
+            is_current = self._current_id == job_id
+            if is_current:
+                # The worker deletes the partial file once it has stopped writing to it.
                 self._cancel_current.set()
             job = attr.evolve(job, status=JobStatus.CANCELLED, error="", updated_at=time.time())
             self._jobs[job_id] = job
             self._persist_locked()
-        if self._current_id != job_id:
+        if not is_current:
+            # Not being downloaded, and the worker never picks up a cancelled job, so nothing else touches the file.
             self._partial_path(job.filename).unlink(missing_ok=True)
         return job
 
@@ -356,29 +359,11 @@ class DownloadManager:
             logger.info("Resuming {} at {} bytes", job.filename, progress.done)
         self._check_space()
 
-        last_error = "no mirrors"
-        for url in job.urls:
-            for attempt in range(1, ATTEMPTS_PER_MIRROR + 1):
-                if progress.done == job.size_bytes:
-                    break
-                try:
-                    self._fetch(client, job, url, progress)
-                except (httpx.HTTPError, DownloadError, OSError) as error:
-                    if isinstance(error, DiskSpaceError):
-                        raise
-                    last_error = f"{url}: {error}"
-                    logger.warning("Download attempt {} from {} failed: {}", attempt, url, error)
-                    # Drop any bytes written past the last fully hashed block so the file matches the hash state.
-                    if partial.exists():
-                        os.truncate(partial, progress.done)
-                    self._update(job.id, bytes_done=progress.done)
-                    if isinstance(error, MirrorRejected):
-                        break
-                    if attempt < ATTEMPTS_PER_MIRROR:
-                        self._sleep(RETRY_DELAY_SECONDS)
-            if progress.done == job.size_bytes:
-                break
-        self._check_cancel()
+        last_error = self._try_mirrors(client, job, progress, allow_restart=False)
+        if progress.done != job.size_bytes and progress.done > 0:
+            # No mirror would resume the partial file; as a last resort start over.
+            logger.warning("No mirror resumed {}; downloading it from the start", job.filename)
+            last_error = self._try_mirrors(client, job, progress, allow_restart=True)
         if progress.done != job.size_bytes:
             raise DownloadError(f"All mirrors failed. Last error: {last_error}")
 
@@ -392,10 +377,41 @@ class DownloadManager:
         self._check_cancel()
         os.replace(partial, target)
         logger.info("Downloaded and verified {}", job.filename)
-        self._on_completed()
+        try:
+            self._on_completed()
+        except Exception as error:
+            raise DownloadError(
+                f'Downloaded and verified, but adding it to the library failed ({error}). Use "Rescan files" to try '
+                "again."
+            ) from error
         self._update(job.id, status=JobStatus.COMPLETED, bytes_done=progress.done)
 
-    def _fetch(self, client: httpx.Client, job: Job, url: str, progress: "_Progress") -> None:
+    def _try_mirrors(self, client: httpx.Client, job: Job, progress: "_Progress", allow_restart: bool) -> str:
+        """Fetch the rest of the file from each mirror in turn until it is complete. Returns the last error seen."""
+        partial = self._partial_path(job.filename)
+        last_error = "no mirrors"
+        for url in job.urls:
+            for attempt in range(1, ATTEMPTS_PER_MIRROR + 1):
+                if progress.done == job.size_bytes:
+                    return last_error
+                try:
+                    self._fetch(client, job, url, progress, allow_restart)
+                except (httpx.HTTPError, DownloadError, OSError) as error:
+                    if isinstance(error, DiskSpaceError):
+                        raise
+                    last_error = f"{url}: {error}"
+                    logger.warning("Download attempt {} from {} failed: {}", attempt, url, error)
+                    # Drop any bytes written past the last fully hashed block so the file matches the hash state.
+                    if partial.exists():
+                        os.truncate(partial, progress.done)
+                    self._update(job.id, bytes_done=progress.done)
+                    if isinstance(error, MirrorRejected):
+                        break
+                    if attempt < ATTEMPTS_PER_MIRROR:
+                        self._sleep(RETRY_DELAY_SECONDS)
+        return last_error
+
+    def _fetch(self, client: httpx.Client, job: Job, url: str, progress: "_Progress", allow_restart: bool) -> None:
         headers = {"Range": f"bytes={progress.done}-"} if progress.done else {}
         with client.stream("GET", url, headers=headers) as response:
             if progress.done and response.status_code == 206:
@@ -404,7 +420,9 @@ class DownloadManager:
                     raise DownloadError(f"unexpected Content-Range {content_range!r}")
                 mode = "ab"
             elif response.status_code == 200:
-                # A fresh download, or a mirror that ignored the range request: start over.
+                if progress.done and not allow_restart:
+                    # The mirror ignored the range request. Try another mirror rather than discarding the partial file.
+                    raise MirrorRejected("mirror does not support resuming")
                 progress.reset()
                 mode = "wb"
             elif 400 <= response.status_code < 500 and response.status_code not in (408, 429):

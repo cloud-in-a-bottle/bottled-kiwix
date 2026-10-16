@@ -28,3 +28,8 @@ def child_text(element: Element, name: str) -> str:
     if found is None or found.text is None:
         return ""
     return found.text.strip()
+
+
+def parse_int(text: str | None) -> int:
+    """A non-negative integer attribute or element value, or 0 when absent or malformed."""
+    return int(text) if text and text.isdigit() else 0

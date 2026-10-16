@@ -24,7 +24,8 @@ class Services:
 
 def build_services(config: Config) -> Services:
     config.data_dir.mkdir(parents=True, exist_ok=True)
-    library = Library(config.library_path, config.zim_dir, config.kiwix_manage_bin)
+    kiwix = KiwixServe(config.kiwix_serve_bin, config.library_path, config.kiwix_port)
+    library = Library(config.library_path, config.zim_dir, config.kiwix_manage_bin, kiwix.wait_for_books)
     catalog_http = httpx.AsyncClient(timeout=httpx.Timeout(30.0), headers={"User-Agent": USER_AGENT})
     upstream_http = httpx.AsyncClient(timeout=httpx.Timeout(connect=5.0, read=600.0, write=60.0, pool=30.0))
     return Services(
@@ -39,7 +40,7 @@ def build_services(config: Config) -> Services:
             local_dir=config.data_dir,
             on_completed=library.reconcile,
         ),
-        kiwix=KiwixServe(config.kiwix_serve_bin, config.library_path, config.kiwix_port),
+        kiwix=kiwix,
         catalog=CatalogClient(config.catalog_url, catalog_http),
         catalog_http=catalog_http,
         upstream_http=upstream_http,

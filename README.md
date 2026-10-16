@@ -38,7 +38,7 @@ ZIM files are bulky and can always be downloaded again, so they live in the arch
 and which the owner can move to S3. The archive is a JuiceFS mount that always reports 1 PiB of capacity, so the
 manager checks free space on the instance's real disk instead. A download that would not fit asks for confirmation
 (on an S3-backed archive the local disk is not the limit), and a running download stops if the disk gets within 2 GB
-of full, well before the platform's 500 MB storage guard stops apps. Stopped downloads can be resumed.
+of full (`KIWIX_RESERVE_BYTES`), well before the platform's 500 MB storage guard stops apps. Stopped downloads can be resumed.
 
 On an S3-backed archive, the first read of each part of a ZIM file is slower; full-text search touches many parts of
 the file, so it is noticeably slower until the JuiceFS cache warms up.

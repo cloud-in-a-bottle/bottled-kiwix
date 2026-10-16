@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import attr
@@ -11,6 +12,7 @@ from loguru import logger
 
 from kiwix_manager.jsonio import atomic_write_text
 from kiwix_manager.xmlutil import children
+from kiwix_manager.xmlutil import parse_int
 from kiwix_manager.xmlutil import parse_xml
 
 EMPTY_LIBRARY = '<?xml version="1.0" encoding="UTF-8"?>\n<library version="20110515">\n</library>\n'
@@ -48,10 +50,6 @@ class ReconcileResult:
     invalid: tuple[str, ...]
 
 
-def _int(raw: str | None) -> int:
-    return int(raw) if raw and raw.isdigit() else 0
-
-
 def parse_library(text: str, library_dir: Path) -> tuple[Book, ...]:
     root = parse_xml(text)
     books: list[Book] = []
@@ -73,9 +71,9 @@ def parse_library(text: str, library_dir: Path) -> tuple[Book, ...]:
                 flavour=element.get("flavour", ""),
                 date=element.get("date", ""),
                 # kiwix-manage records the size in KiB.
-                size_bytes=_int(element.get("size")) * 1024,
-                article_count=_int(element.get("articleCount")),
-                media_count=_int(element.get("mediaCount")),
+                size_bytes=parse_int(element.get("size")) * 1024,
+                article_count=parse_int(element.get("articleCount")),
+                media_count=parse_int(element.get("mediaCount")),
             )
         )
     return tuple(books)
@@ -90,8 +88,15 @@ class Library:
     watches the file (``--monitorLibrary``) and must never observe a half-written library.
     """
 
-    def __init__(self, library_path: Path, zim_dir: Path, kiwix_manage_bin: str) -> None:
+    def __init__(
+        self,
+        library_path: Path,
+        zim_dir: Path,
+        kiwix_manage_bin: str,
+        wait_for_server: Callable[[frozenset[str]], None] = lambda _: None,
+    ) -> None:
         self._library_path = library_path
+        self._wait_for_server = wait_for_server
         self._zim_dir = zim_dir
         self._kiwix_manage_bin = kiwix_manage_bin
         self._lock = threading.Lock()
@@ -159,7 +164,12 @@ class Library:
                 self._replace_library(tmp)
             finally:
                 tmp.unlink(missing_ok=True)
-            self._books = self._read()
+            books = self._read()
+            # Deliberately under the lock: library changes are serialized, and each one is only reported once the
+            # reader serves it (normally about a second; bounded by the wait's timeout). Readers of books() are not
+            # blocked.
+            self._wait_for_server(frozenset(book.id for book in books))
+            self._books = books
             # Files that failed before and are still present stay flagged until they disappear or become valid.
             still_invalid = {name for name in self._invalid if (self._zim_dir / name).exists()} - set(added)
             self._invalid = tuple(sorted(still_invalid | set(invalid)))

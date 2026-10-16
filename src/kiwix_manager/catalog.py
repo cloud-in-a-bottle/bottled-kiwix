@@ -10,6 +10,7 @@ import httpx
 from kiwix_manager.xmlutil import child
 from kiwix_manager.xmlutil import child_text
 from kiwix_manager.xmlutil import children
+from kiwix_manager.xmlutil import parse_int
 from kiwix_manager.xmlutil import parse_xml
 
 BOOK_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -63,10 +64,6 @@ class Illustration:
     content_type: str
 
 
-def _int(text: str) -> int:
-    return int(text) if text.isdigit() else 0
-
-
 def _parse_entry(element: Element) -> CatalogEntry | None:
     raw_id = child_text(element, "id").removeprefix("urn:uuid:")
     if not BOOK_ID_RE.match(raw_id):
@@ -78,7 +75,7 @@ def _parse_entry(element: Element) -> CatalogEntry | None:
         rel = link.get("rel")
         if rel == ACQUISITION_REL:
             meta4_url = link.get("href", "")
-            size_bytes = _int(link.get("length", ""))
+            size_bytes = parse_int(link.get("length", ""))
         elif rel == THUMBNAIL_REL:
             has_illustration = True
     if not meta4_url:
@@ -93,8 +90,8 @@ def _parse_entry(element: Element) -> CatalogEntry | None:
         flavour=child_text(element, "flavour"),
         category=child_text(element, "category"),
         tags=child_text(element, "tags"),
-        article_count=_int(child_text(element, "articleCount")),
-        media_count=_int(child_text(element, "mediaCount")),
+        article_count=parse_int(child_text(element, "articleCount")),
+        media_count=parse_int(child_text(element, "mediaCount")),
         issued=issued[:10],
         size_bytes=size_bytes,
         meta4_url=meta4_url,
@@ -106,10 +103,16 @@ def parse_entries(text: str | bytes) -> CatalogPage:
     root = parse_xml(text)
     entries = tuple(entry for element in children(root, "entry") if (entry := _parse_entry(element)) is not None)
     return CatalogPage(
-        total=_int(child_text(root, "totalResults")) or len(entries),
-        start=_int(child_text(root, "startIndex")),
+        total=parse_int(child_text(root, "totalResults")) or len(entries),
+        start=parse_int(child_text(root, "startIndex")),
         entries=entries,
     )
+
+
+def parse_entry_ids(text: str | bytes) -> frozenset[str]:
+    """Book ids in a feed, including entries without a download link (as served for a local library)."""
+    root = parse_xml(text)
+    return frozenset(child_text(element, "id").removeprefix("urn:uuid:") for element in children(root, "entry"))
 
 
 def parse_facets(text: str | bytes, value_element: str) -> tuple[Facet, ...]:
@@ -119,7 +122,7 @@ def parse_facets(text: str | bytes, value_element: str) -> tuple[Facet, ...]:
         label = child_text(element, "title")
         value = child_text(element, value_element) or label
         count_element = child(element, "count")
-        count = _int((count_element.text or "").strip()) if count_element is not None else 0
+        count = parse_int((count_element.text or "").strip()) if count_element is not None else 0
         if value:
             facets.append(Facet(value=value, label=label, count=count))
     return tuple(facets)

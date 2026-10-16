@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from collections.abc import Callable
+from urllib.parse import quote
 
 import httpx
 from loguru import logger
@@ -100,7 +101,7 @@ class ReaderProxy:
     async def _forward(
         self, scope: Scope, receive: Receive, send: Send, headers: dict[str, str], method: str, path: str, query: str
     ) -> None:
-        raw_path: bytes = scope.get("raw_path") or path.encode()
+        raw_path: bytes = scope.get("raw_path") or quote(path).encode("ascii")
         url = self._upstream + raw_path.decode("latin-1")
         if query:
             url = f"{url}?{query}"
@@ -120,9 +121,9 @@ class ReaderProxy:
             return
         try:
             response_headers = [
-                (name.encode("latin-1"), value.encode("latin-1"))
-                for name, value in response.headers.multi_items()
-                if name.lower() not in HOP_BY_HOP
+                (name, value)
+                for name, value in response.headers.raw
+                if name.decode("latin-1").lower() not in HOP_BY_HOP
             ]
             await send({"type": "http.response.start", "status": response.status_code, "headers": response_headers})
             async for chunk in response.aiter_raw():

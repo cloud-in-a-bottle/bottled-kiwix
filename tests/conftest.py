@@ -3,6 +3,7 @@ import os
 import shutil
 import threading
 import urllib.request
+from collections.abc import Callable
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
@@ -132,15 +133,26 @@ def _make_handler(behaviour: FileServerBehaviour) -> type[BaseHTTPRequestHandler
 
 
 @pytest.fixture
-def file_server() -> Iterator[FileServer]:
-    behaviour = FileServerBehaviour()
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _make_handler(behaviour))
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+def make_file_server() -> Iterator[Callable[[], FileServer]]:
+    servers: list[tuple[ThreadingHTTPServer, FileServerBehaviour]] = []
+
+    def make() -> FileServer:
+        behaviour = FileServerBehaviour()
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _make_handler(behaviour))
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        servers.append((server, behaviour))
+        return FileServer(url=f"http://127.0.0.1:{server.server_address[1]}", behaviour=behaviour)
+
     try:
-        yield FileServer(url=f"http://127.0.0.1:{server.server_address[1]}", behaviour=behaviour)
+        yield make
     finally:
-        if behaviour.gate is not None:
-            behaviour.gate.set()
-        server.shutdown()
-        server.server_close()
+        for server, behaviour in servers:
+            if behaviour.gate is not None:
+                behaviour.gate.set()
+            server.shutdown()
+            server.server_close()
+
+
+@pytest.fixture
+def file_server(make_file_server: Callable[[], FileServer]) -> FileServer:
+    return make_file_server()

@@ -47,8 +47,14 @@ class Stack:
 
 @pytest.fixture
 async def stack(
-    tmp_path: Path, file_server: FileServer, test_zim: Path, kiwix_serve_bin: str, kiwix_manage_bin: str
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    file_server: FileServer,
+    test_zim: Path,
+    kiwix_serve_bin: str,
+    kiwix_manage_bin: str,
 ) -> AsyncIterator[Stack]:
+    reserve_bytes = getattr(request, "param", 0)
     payload = test_zim.read_bytes()
     file_server.behaviour.payload = payload
     meta4_url = f"{file_server.url}/zim/{test_zim.name}.meta4"
@@ -85,7 +91,7 @@ async def stack(
         "KIWIX_CATALOG_URL": file_server.url,
         "KIWIX_META4_URL_PREFIXES": f"{file_server.url}/zim/",
         "KIWIX_ALLOW_INSECURE_MIRRORS": "1",
-        "KIWIX_RESERVE_BYTES": "0",
+        "KIWIX_RESERVE_BYTES": str(reserve_bytes),
     }
     log = (tmp_path / "server.log").open("w")
     # Run the real server process, as the container does.
@@ -149,13 +155,8 @@ async def _wait_for_book(client: httpx.AsyncClient, present: bool) -> dict[str, 
 
 
 async def _get_reader(client: httpx.AsyncClient, path: str, headers: dict[str, str]) -> httpx.Response:
-    # kiwix-serve picks up library changes by polling the file, so allow it a moment.
-    for _ in range(100):
-        response = await client.get(path, headers=headers, follow_redirects=True)
-        if response.status_code != 404:
-            return response
-        await asyncio.sleep(0.1)
-    return response
+    # No retries: once the manager reports a library change, kiwix-serve must already reflect it.
+    return await client.get(path, headers=headers, follow_redirects=True)
 
 
 async def test_manager_requires_owner(stack: Stack) -> None:
@@ -229,8 +230,11 @@ async def test_download_read_share_and_delete(stack: Stack, test_zim: Path) -> N
 
     deleted = await client.delete(f"/_manage/api/books/{TEST_ZIM_ID}", headers=OWNER_WRITE)
     assert deleted.status_code == 204
-    await _wait_for_book(client, present=False)
+    state = (await client.get("/_manage/api/state", headers=OWNER)).json()
+    assert state["books"] == []
     assert not (stack.zim_dir / test_zim.name).exists()
+    gone = await client.get(f"/content/{test_zim.stem}", headers=OWNER, follow_redirects=True)
+    assert gone.status_code == 404
 
 
 async def test_rejects_unknown_and_untrusted_downloads(stack: Stack) -> None:
@@ -254,3 +258,52 @@ async def test_rescan_picks_up_dropped_in_files(stack: Stack, test_zim: Path) ->
     assert [book["filename"] for book in response.json()["books"]] == ["dropped_in.zim"]
     article = await _get_reader(client, "/content/dropped_in", OWNER)
     assert article.status_code == 200
+
+
+async def test_retry_and_dismiss_downloads(stack: Stack, file_server: FileServer) -> None:
+    client = stack.client
+    file_server.behaviour.status_override = 404  # every mirror request fails permanently
+    started = await client.post("/_manage/api/downloads", json={"book_id": TEST_ZIM_ID}, headers=OWNER_WRITE)
+    assert started.status_code == 201
+    job_id = started.json()["id"]
+    job = await _wait_for_job(client, job_id, {"failed"})
+    assert "HTTP 404" in job["error"]
+
+    file_server.behaviour.status_override = None
+    retried = await client.post(f"/_manage/api/downloads/{job_id}/retry", headers=OWNER_WRITE)
+    assert retried.status_code == 201
+    await _wait_for_job(client, job_id, {"completed"})
+    assert (await client.delete(f"/_manage/api/downloads/{job_id}", headers=OWNER_WRITE)).status_code == 204
+    state = (await client.get("/_manage/api/state", headers=OWNER)).json()
+    assert state["downloads"] == []
+    assert [book["id"] for book in state["books"]] == [TEST_ZIM_ID]
+    missing = await client.post("/_manage/api/downloads/nope/retry", headers=OWNER_WRITE)
+    assert missing.status_code == 400
+
+
+# A reserve larger than any disk, so every download looks like it will not fit.
+@pytest.mark.parametrize("stack", [10**18], indirect=True)
+async def test_insufficient_space_can_be_overridden(stack: Stack) -> None:
+    client = stack.client
+    refused = await client.post("/_manage/api/downloads", json={"book_id": TEST_ZIM_ID}, headers=OWNER_WRITE)
+    assert refused.status_code == 409
+    assert refused.json()["extra"]["code"] == "insufficient_space"
+    assert (await client.get("/_manage/api/state", headers=OWNER)).json()["downloads"] == []
+    forced = await client.post(
+        "/_manage/api/downloads", json={"book_id": TEST_ZIM_ID, "ignore_space_check": True}, headers=OWNER_WRITE
+    )
+    assert forced.status_code == 201
+    # The download itself then stops at once, because the disk is below the reserve.
+    job = await _wait_for_job(client, forced.json()["id"], {"failed", "completed"})
+    assert job["status"] == "failed"
+    assert "disk is nearly full" in str(job["error"])
+
+
+async def _wait_for_job(client: httpx.AsyncClient, job_id: str, statuses: set[str]) -> dict[str, object]:
+    for _ in range(300):
+        state = (await client.get("/_manage/api/state", headers=OWNER)).json()
+        job = next(job for job in state["downloads"] if job["id"] == job_id)
+        if job["status"] in statuses:
+            return job
+        await asyncio.sleep(0.1)
+    raise AssertionError(f"job never reached {statuses}: {job}")

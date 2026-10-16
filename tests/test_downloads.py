@@ -258,3 +258,61 @@ def test_state_survives_restart(harness: Harness, file_server: FileServer) -> No
     harness.restart()
     jobs = harness.manager.jobs()
     assert [(restored.id, restored.status) for restored in jobs] == [(job.id, JobStatus.COMPLETED)]
+
+
+def test_resume_skips_mirrors_that_ignore_range(tmp_path: Path, make_file_server: Callable[[], FileServer]) -> None:
+    no_range = make_file_server()
+    no_range.behaviour.payload = PAYLOAD
+    no_range.behaviour.ignore_range = True
+    with_range = make_file_server()
+    with_range.behaviour.payload = PAYLOAD
+    (tmp_path / "partial").mkdir()
+    (tmp_path / "partial" / f"{FILENAME}.part").write_bytes(PAYLOAD[:1_500_000])
+    harness = Harness(tmp_path)
+    harness.manager.start()
+    try:
+        job = harness.enqueue((f"{no_range.url}/{FILENAME}", f"{with_range.url}/{FILENAME}"))
+        assert job.bytes_done == 1_500_000
+        done = harness.wait_for(job.id, {JobStatus.COMPLETED, JobStatus.FAILED})
+        assert done.status == JobStatus.COMPLETED, done.error
+        # The partial file was kept and resumed from the mirror that honours ranges.
+        assert with_range.behaviour.requests == [("/" + FILENAME, "bytes=1500000-")]
+        assert (tmp_path / "zims" / FILENAME).read_bytes() == PAYLOAD
+    finally:
+        harness.manager.stop()
+
+
+def test_library_failure_after_download_is_reported(tmp_path: Path, file_server: FileServer) -> None:
+    file_server.behaviour.payload = PAYLOAD
+
+    def broken_library() -> None:
+        raise RuntimeError("kiwix-manage exploded")
+
+    manager = DownloadManager(
+        state_path=tmp_path / "downloads.json",
+        partial_dir=tmp_path / "partial",
+        zim_dir=tmp_path / "zims",
+        reserve_bytes=0,
+        on_completed=broken_library,
+        local_dir=tmp_path,
+        space_probe=lambda _: PLENTY,
+    )
+    manager.start()
+    try:
+        job = manager.enqueue(
+            book_id=BOOK_ID,
+            title="Test",
+            filename=FILENAME,
+            size_bytes=len(PAYLOAD),
+            sha256=SHA256,
+            urls=(f"{file_server.url}/{FILENAME}",),
+        )
+        deadline = time.monotonic() + 30
+        while (current := manager.jobs()[0]).active and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert current.status == JobStatus.FAILED
+        assert "Rescan files" in current.error
+        assert (tmp_path / "zims" / FILENAME).exists()
+        assert job.id == current.id
+    finally:
+        manager.stop()
