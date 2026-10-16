@@ -1,0 +1,30 @@
+[app]
+name = "kiwix"
+version = "0.1.0"
+description = "Offline Wikipedia and other Kiwix ZIM libraries, with a library manager for downloading content"
+authors = ["Andrew Laack <andrew@laack.co>"]
+
+[runtime.container]
+image = "Dockerfile"
+port = 8080
+
+[routing]
+health_check = "/_manage/healthz"
+# The whole app is public at the router so the owner can choose to share the
+# reader. The app enforces access itself: /_manage/ is owner-only, and the
+# reader is owner-only unless the owner enables public access in the manager.
+public_paths = ["/"]
+
+[[links]]
+name = "Manage library"
+path = "/_manage/"
+
+[resources]
+memory_mb = 1024
+cpu_cores = 1.0
+
+[data]
+# Settings, the kiwix-serve library file and download state.
+app_data = true
+# ZIM files. Bulk, re-downloadable content; can be backed by S3.
+app_archive = true

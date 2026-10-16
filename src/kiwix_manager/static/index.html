@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manage library · Kiwix</title>
+  <link rel="stylesheet" href="/_manage/static/manage.css">
+  <script src="/_manage/static/manage.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <h1>Kiwix library</h1>
+      <a class="button secondary" href="/" id="open-library">Open library</a>
+    </div>
+  </header>
+  <main>
+    <div id="banner" class="banner" role="alert" hidden></div>
+
+    <section aria-labelledby="access-heading" class="card">
+      <h2 id="access-heading">Access</h2>
+      <label class="toggle">
+        <input type="checkbox" id="public-toggle">
+        <span>Anyone with the link can read this library</span>
+      </label>
+      <p class="hint" id="access-hint">Only you can read the library.</p>
+      <p class="hint" id="storage-line"></p>
+    </section>
+
+    <section aria-labelledby="downloads-heading" class="card" id="downloads-section" hidden>
+      <h2 id="downloads-heading">Downloads</h2>
+      <ul class="list" id="downloads"></ul>
+    </section>
+
+    <section aria-labelledby="library-heading" class="card">
+      <div class="section-head">
+        <h2 id="library-heading">In your library</h2>
+        <button type="button" class="secondary small" id="rescan">Rescan files</button>
+      </div>
+      <p class="hint" id="library-empty">Nothing yet. Find something to download below.</p>
+      <ul class="list" id="books"></ul>
+      <p class="hint warning" id="invalid-files" hidden></p>
+    </section>
+
+    <section aria-labelledby="catalog-heading" class="card">
+      <h2 id="catalog-heading">Get content</h2>
+      <form id="search-form" class="search" role="search">
+        <label class="field grow">
+          <span>Search</span>
+          <input type="search" id="search-query" placeholder="e.g. wikipedia, wiktionary, stack overflow">
+        </label>
+        <label class="field">
+          <span>Language</span>
+          <select id="search-language"><option value="">All languages</option></select>
+        </label>
+        <label class="field">
+          <span>Category</span>
+          <select id="search-category"><option value="">All categories</option></select>
+        </label>
+        <button type="submit">Search</button>
+      </form>
+      <p class="hint" id="catalog-status" aria-live="polite"></p>
+      <ul class="results" id="results"></ul>
+      <div class="pager">
+        <button type="button" class="secondary" id="prev-page" hidden>Previous</button>
+        <button type="button" class="secondary" id="next-page" hidden>Next</button>
+      </div>
+      <p class="hint">Content comes from the <a href="https://library.kiwix.org/" rel="noopener noreferrer">Kiwix catalog</a>. Every download is checked against its published SHA-256 checksum.</p>
+    </section>
+  </main>
+  <template id="book-template">
+    <li class="item">
+      <div class="item-main">
+        <a class="item-title" data-field="link"></a>
+        <span class="item-meta" data-field="meta"></span>
+      </div>
+      <button type="button" class="danger small" data-action="delete">Delete</button>
+    </li>
+  </template>
+  <template id="download-template">
+    <li class="item">
+      <div class="item-main">
+        <span class="item-title" data-field="title"></span>
+        <progress max="100" value="0" data-field="progress"></progress>
+        <span class="item-meta" data-field="meta"></span>
+      </div>
+      <div class="item-actions" data-field="actions"></div>
+    </li>
+  </template>
+  <template id="result-template">
+    <li class="result">
+      <img alt="" width="48" height="48" data-field="icon">
+      <div class="result-body">
+        <span class="item-title" data-field="title"></span>
+        <span class="item-meta" data-field="summary"></span>
+        <span class="item-meta" data-field="meta"></span>
+      </div>
+      <button type="button" class="small" data-action="download"></button>
+    </li>
+  </template>
+</body>
+</html>
