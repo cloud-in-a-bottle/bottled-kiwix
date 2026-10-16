@@ -89,7 +89,7 @@ function renderBooks() {
   for (const book of state.books) {
     const node = fill("book-template", { link: book.title, meta: bookMeta(book) });
     const link = node.querySelector('[data-field="link"]');
-    link.href = `/content/${encodeURIComponent(book.content_name)}`;
+    link.href = `/viewer#${encodeURIComponent(book.content_name)}`;
     const button = node.querySelector('[data-action="delete"]');
     button.setAttribute("aria-label", `Delete ${book.title}`);
     button.addEventListener("click", async () => {
