@@ -44,10 +44,16 @@ class Book:
 
 
 @attr.s(auto_attribs=True, frozen=True)
+class SkippedFile:
+    name: str
+    reason: str
+
+
+@attr.s(auto_attribs=True, frozen=True)
 class ReconcileResult:
     added: tuple[str, ...]
     removed: tuple[str, ...]
-    invalid: tuple[str, ...]
+    skipped: tuple[SkippedFile, ...]
 
 
 def parse_library(text: str, library_dir: Path) -> tuple[Book, ...]:
@@ -101,7 +107,7 @@ class Library:
         self._kiwix_manage_bin = kiwix_manage_bin
         self._lock = threading.Lock()
         self._books: tuple[Book, ...] = ()
-        self._invalid: tuple[str, ...] = ()
+        self._skipped: tuple[SkippedFile, ...] = ()
 
     def initialize(self) -> None:
         self._zim_dir.mkdir(parents=True, exist_ok=True)
@@ -113,8 +119,9 @@ class Library:
     def books(self) -> tuple[Book, ...]:
         return self._books
 
-    def invalid_files(self) -> tuple[str, ...]:
-        return self._invalid
+    def skipped_files(self) -> tuple[SkippedFile, ...]:
+        """ZIM files in the directory that are not in the library, and why."""
+        return self._skipped
 
     def _read(self) -> tuple[Book, ...]:
         return parse_library(self._library_path.read_text(), self._library_path.parent.resolve())
@@ -128,6 +135,17 @@ class Library:
             check=False,
         )
 
+    def _probe_id(self, path: Path, scratch_dir: Path) -> str | None:
+        """The book id of a ZIM file, or None if kiwix-manage cannot read it."""
+        scratch = scratch_dir / "probe.xml"
+        scratch.unlink(missing_ok=True)
+        result = self._manage(scratch, "add", str(path))
+        if result.returncode != 0:
+            logger.warning("Skipping invalid ZIM {}: {}", path, (result.stderr or result.stdout).strip())
+            return None
+        books = parse_library(scratch.read_text(), scratch_dir.resolve())
+        return books[0].id if len(books) == 1 else None
+
     def reconcile(self) -> ReconcileResult:
         with self._lock:
             current = self._read()
@@ -135,47 +153,53 @@ class Library:
             known = {book.path for book in current}
             stale = [book for book in current if book.path not in on_disk]
             new = sorted(on_disk - known)
-            if not stale and not new:
-                self._books = current
-                self._invalid = tuple(name for name in self._invalid if (self._zim_dir / name).exists())
-                return ReconcileResult(added=(), removed=(), invalid=self._invalid)
-            fd, tmp_name = tempfile.mkstemp(
-                dir=self._library_path.parent, prefix=f".{self._library_path.name}.", suffix=".tmp"
-            )
-            os.close(fd)
-            tmp = Path(tmp_name)
-            try:
-                shutil.copyfile(self._library_path, tmp)
-                removed: list[str] = []
-                for book in stale:
-                    result = self._manage(tmp, "remove", book.id)
-                    if result.returncode != 0:
-                        raise LibraryError(f"kiwix-manage could not remove {book.id}: {result.stderr.strip()}")
-                    removed.append(book.path.name)
-                added: list[str] = []
-                invalid: list[str] = []
-                for path in new:
-                    result = self._manage(tmp, "add", str(path))
-                    if result.returncode != 0:
-                        logger.warning("Skipping invalid ZIM {}: {}", path, (result.stderr or result.stdout).strip())
-                        invalid.append(path.name)
-                    else:
-                        added.append(path.name)
-                self._replace_library(tmp)
-            finally:
-                tmp.unlink(missing_ok=True)
+            skipped: dict[str, str] = {}
+            added: list[str] = []
+            removed: list[str] = []
+            if stale or new:
+                with tempfile.TemporaryDirectory(dir=self._library_path.parent, prefix=".reconcile.") as work:
+                    work_dir = Path(work)
+                    # kiwix-manage stores paths relative to the library file, so the working copy must sit next to
+                    # the real one for those paths to stay valid after the rename.
+                    tmp = self._library_path.with_name(f".{self._library_path.name}.{work_dir.name}.tmp")
+                    shutil.copyfile(self._library_path, tmp)
+                    try:
+                        for book in stale:
+                            result = self._manage(tmp, "remove", book.id)
+                            if result.returncode != 0:
+                                raise LibraryError(f"kiwix-manage could not remove {book.id}: {result.stderr.strip()}")
+                            removed.append(book.path.name)
+                        # The library is keyed by book id, so a second file with an id already present would silently
+                        # replace the first entry. Keep the first one and report the other.
+                        owners = {book.id: book.path.name for book in current if book.path in on_disk}
+                        for path in new:
+                            book_id = self._probe_id(path, work_dir)
+                            if book_id is None:
+                                skipped[path.name] = "not a valid ZIM file"
+                                continue
+                            if book_id in owners:
+                                skipped[path.name] = f"the same book as {owners[book_id]}"
+                                continue
+                            result = self._manage(tmp, "add", str(path))
+                            if result.returncode != 0:
+                                skipped[path.name] = "not a valid ZIM file"
+                                continue
+                            owners[book_id] = path.name
+                            added.append(path.name)
+                        if added or removed:
+                            self._replace_library(tmp)
+                    finally:
+                        tmp.unlink(missing_ok=True)
             books = self._read()
-            # Deliberately under the lock: library changes are serialized, and each one is only reported once the
-            # reader serves it (normally about a second; bounded by the wait's timeout). Readers of books() are not
-            # blocked.
-            self._wait_for_server(frozenset(book.id for book in books))
-            self._books = books
-            # Files that failed before and are still present stay flagged until they disappear or become valid.
-            still_invalid = {name for name in self._invalid if (self._zim_dir / name).exists()} - set(added)
-            self._invalid = tuple(sorted(still_invalid | set(invalid)))
             if added or removed:
+                # Deliberately under the lock: library changes are serialized, and each one is only reported once
+                # the reader serves it (normally about a second; bounded by the wait's timeout). Readers of books()
+                # are not blocked.
+                self._wait_for_server(frozenset(book.id for book in books))
                 logger.info("Library updated: added {} removed {}", added, removed)
-            return ReconcileResult(added=tuple(added), removed=tuple(removed), invalid=self._invalid)
+            self._books = books
+            self._skipped = tuple(SkippedFile(name=name, reason=reason) for name, reason in sorted(skipped.items()))
+            return ReconcileResult(added=tuple(added), removed=tuple(removed), skipped=self._skipped)
 
     def _replace_library(self, new_library: Path) -> None:
         # kiwix-serve notices changes by comparing whole-second modification times, so a change made within the same

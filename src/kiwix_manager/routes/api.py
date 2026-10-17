@@ -29,6 +29,7 @@ from kiwix_manager.downloads import InsufficientSpaceError
 from kiwix_manager.downloads import Job
 from kiwix_manager.library import Book
 from kiwix_manager.library import LibraryError
+from kiwix_manager.library import SkippedFile
 from kiwix_manager.metalink import MetalinkError
 from kiwix_manager.metalink import parse_metalink
 from kiwix_manager.routes.types import ManagerConnection
@@ -94,7 +95,7 @@ class StateView:
     free_bytes: int
     reserve_bytes: int
     books: tuple[BookView, ...]
-    invalid_files: tuple[str, ...]
+    skipped_files: tuple[SkippedFile, ...]
     downloads: tuple[JobView, ...]
 
 
@@ -172,7 +173,7 @@ def _state(services: Services) -> StateView:
         free_bytes=services.downloads.free_space(),
         reserve_bytes=services.config.reserve_bytes,
         books=tuple(book_view(book) for book in sorted(services.library.books(), key=lambda book: book.title.lower())),
-        invalid_files=services.library.invalid_files(),
+        skipped_files=services.library.skipped_files(),
         downloads=tuple(job_view(job) for job in reversed(services.downloads.jobs())),
     )
 
@@ -248,6 +249,8 @@ async def start_download(request: ManagerRequest, data: DownloadRequest) -> JobV
         entry = await services.catalog.entry(data.book_id)
     except CatalogError as error:
         raise ClientException(str(error)) from error
+    if any(book.id == entry.id for book in services.library.books()):
+        raise ClientException(f"{entry.title} is already in the library")
     if not entry.meta4_url.startswith(config.meta4_url_prefixes):
         raise ClientException(f"Refusing download from unexpected location {entry.meta4_url}")
     try:

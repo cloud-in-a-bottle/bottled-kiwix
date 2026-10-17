@@ -5,6 +5,7 @@ import pytest
 
 from kiwix_manager.library import Library
 from kiwix_manager.library import LibraryError
+from kiwix_manager.library import SkippedFile
 from tests.conftest import TEST_ZIM_ID
 
 
@@ -39,11 +40,30 @@ def test_reconcile_adds_and_removes(library: Library, tmp_path: Path, test_zim: 
 def test_reconcile_flags_invalid_files(library: Library, tmp_path: Path) -> None:
     zim_dir = tmp_path / "archive" / "zims"
     (zim_dir / "garbage.zim").write_bytes(b"not a zim")
+    library_mtime = (tmp_path / "data" / "library.xml").stat().st_mtime
     result = library.reconcile()
-    assert result.invalid == ("garbage.zim",)
+    assert result.skipped == (SkippedFile(name="garbage.zim", reason="not a valid ZIM file"),)
     assert library.books() == ()
+    # Nothing changed, so the library file (which kiwix-serve watches) was not rewritten.
+    assert (tmp_path / "data" / "library.xml").stat().st_mtime == library_mtime
     (zim_dir / "garbage.zim").unlink()
-    assert library.reconcile().invalid == ()
+    assert library.reconcile().skipped == ()
+
+
+def test_reconcile_skips_duplicate_books(library: Library, tmp_path: Path, test_zim: Path) -> None:
+    zim_dir = tmp_path / "archive" / "zims"
+    shutil.copy(test_zim, zim_dir / test_zim.name)
+    library.reconcile()
+    shutil.copy(test_zim, zim_dir / "a_copy.zim")
+    for _ in range(2):
+        result = library.reconcile()
+        assert result.skipped == (SkippedFile(name="a_copy.zim", reason=f"the same book as {test_zim.name}"),)
+        assert [book.path.name for book in library.books()] == [test_zim.name]
+    # Once the original is gone, the copy takes its place.
+    (zim_dir / test_zim.name).unlink()
+    result = library.reconcile()
+    assert result.added == ("a_copy.zim",)
+    assert result.skipped == ()
 
 
 def test_reconcile_ignores_other_files(library: Library, tmp_path: Path, test_zim: Path) -> None:

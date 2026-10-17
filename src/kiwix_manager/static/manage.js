@@ -107,9 +107,9 @@ function renderBooks() {
     });
     list.append(node);
   }
-  const invalid = $("invalid-files");
-  invalid.hidden = state.invalid_files.length === 0;
-  invalid.textContent = `These files are not valid ZIM files and were skipped: ${state.invalid_files.join(", ")}`;
+  const skipped = $("skipped-files");
+  skipped.hidden = state.skipped_files.length === 0;
+  skipped.textContent = "Skipped: " + state.skipped_files.map((file) => `${file.name} (${file.reason})`).join("; ");
 }
 
 function downloadMeta(job) {
