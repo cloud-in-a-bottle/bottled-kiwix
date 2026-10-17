@@ -161,7 +161,7 @@ def entry_status(entry: CatalogEntry, books: tuple[Book, ...], jobs: tuple[Job, 
     if any(book.id == entry.id for book in books):
         return EntryStatus.INSTALLED
     same_book = [book for book in books if book.name == entry.name and book.flavour == entry.flavour]
-    if same_book and entry.name and all(book.date < entry.issued for book in same_book):
+    if same_book and entry.name and entry.issued and all(book.date and book.date < entry.issued for book in same_book):
         return EntryStatus.UPDATE_AVAILABLE
     return EntryStatus.AVAILABLE
 

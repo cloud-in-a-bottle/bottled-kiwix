@@ -344,10 +344,10 @@ class DownloadManager:
     def _download(self, client: httpx.Client, job: Job) -> None:
         partial = self._partial_path(job.filename)
         target = self._zim_dir / job.filename
-        progress = _Progress()
+        progress = DownloadProgress()
         existing_size = self._partial_size(job.filename)
         if existing_size > job.size_bytes:
-            partial.unlink()
+            partial.unlink(missing_ok=True)
             existing_size = 0
         job = self._update(job.id, status=JobStatus.DOWNLOADING, error="", bytes_done=existing_size)
         if existing_size:
@@ -386,7 +386,7 @@ class DownloadManager:
             ) from error
         self._update(job.id, status=JobStatus.COMPLETED, bytes_done=progress.done)
 
-    def _try_mirrors(self, client: httpx.Client, job: Job, progress: "_Progress", allow_restart: bool) -> str:
+    def _try_mirrors(self, client: httpx.Client, job: Job, progress: "DownloadProgress", allow_restart: bool) -> str:
         """Fetch the rest of the file from each mirror in turn until it is complete. Returns the last error seen."""
         partial = self._partial_path(job.filename)
         last_error = "no mirrors"
@@ -411,7 +411,9 @@ class DownloadManager:
                         self._sleep(RETRY_DELAY_SECONDS)
         return last_error
 
-    def _fetch(self, client: httpx.Client, job: Job, url: str, progress: "_Progress", allow_restart: bool) -> None:
+    def _fetch(
+        self, client: httpx.Client, job: Job, url: str, progress: "DownloadProgress", allow_restart: bool
+    ) -> None:
         headers = {"Range": f"bytes={progress.done}-"} if progress.done else {}
         with client.stream("GET", url, headers=headers) as response:
             if progress.done and response.status_code == 206:
@@ -454,7 +456,7 @@ class DownloadManager:
             self._update(job.id, bytes_done=progress.done)
 
 
-class _Progress:
+class DownloadProgress:
     """Bytes written to the partial file so far and the running hash over exactly those bytes."""
 
     def __init__(self) -> None:

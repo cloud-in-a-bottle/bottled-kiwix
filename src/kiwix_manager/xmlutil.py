@@ -1,10 +1,19 @@
 from xml.etree.ElementTree import Element
+from xml.etree.ElementTree import ParseError
 
 import defusedxml.ElementTree
+from defusedxml import DefusedXmlException
+
+
+class XmlError(ValueError):
+    pass
 
 
 def parse_xml(text: str | bytes) -> Element:
-    root: Element = defusedxml.ElementTree.fromstring(text)
+    try:
+        root: Element = defusedxml.ElementTree.fromstring(text)
+    except (ParseError, DefusedXmlException) as error:
+        raise XmlError(str(error)) from error
     return root
 
 

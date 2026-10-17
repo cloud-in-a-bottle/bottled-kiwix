@@ -8,6 +8,7 @@ import httpx
 from loguru import logger
 
 from kiwix_manager.catalog import parse_entry_ids
+from kiwix_manager.xmlutil import XmlError
 
 RESTART_DELAY_SECONDS = 2.0
 MAX_RESTART_DELAY_SECONDS = 60.0
@@ -62,16 +63,16 @@ class KiwixServe:
             try:
                 self._process = await asyncio.create_subprocess_exec(*self._command())
             except OSError as error:
-                logger.error("Could not start kiwix-serve: {}", error)
-                code = None
+                self._process = None
+                logger.error("Could not start kiwix-serve ({}); retrying in {:.0f}s", error, delay)
             else:
                 logger.info("Started kiwix-serve (pid {})", self._process.pid)
                 code = await self._process.wait()
-            if self._stopping:
-                return
-            if loop.time() - started >= HEALTHY_RUN_SECONDS:
-                delay = RESTART_DELAY_SECONDS
-            logger.error("kiwix-serve exited with code {}; restarting in {:.0f}s", code, delay)
+                if self._stopping:
+                    return
+                if loop.time() - started >= HEALTHY_RUN_SECONDS:
+                    delay = RESTART_DELAY_SECONDS
+                logger.error("kiwix-serve exited with code {}; restarting in {:.0f}s", code, delay)
             await asyncio.sleep(delay)
             delay = min(delay * 2, MAX_RESTART_DELAY_SECONDS)
 
@@ -86,6 +87,7 @@ class KiwixServe:
             return
         deadline = time.monotonic() + LIBRARY_SYNC_TIMEOUT_SECONDS
         served: frozenset[str] = frozenset()
+        last_error = ""
         with httpx.Client(base_url=self.base_url, timeout=5.0) as client:
             while time.monotonic() < deadline:
                 try:
@@ -94,10 +96,15 @@ class KiwixServe:
                         served = parse_entry_ids(response.content)
                         if served == expected_ids:
                             return
-                except (httpx.HTTPError, SyntaxError) as error:
+                except (httpx.HTTPError, XmlError) as error:
+                    last_error = str(error)
                     logger.debug("Waiting for kiwix-serve: {}", error)
                 time.sleep(0.2)
-        logger.warning("kiwix-serve did not pick up the library change in time (serving {})", sorted(served))
+        logger.warning(
+            "kiwix-serve did not pick up the library change in time (serving {}; last error: {})",
+            sorted(served),
+            last_error or "none",
+        )
 
     async def stop(self) -> None:
         self._stopping = True

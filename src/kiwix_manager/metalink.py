@@ -1,8 +1,8 @@
 import re
-from xml.etree.ElementTree import ParseError
 
 import attr
 
+from kiwix_manager.xmlutil import XmlError
 from kiwix_manager.xmlutil import child_text
 from kiwix_manager.xmlutil import children
 from kiwix_manager.xmlutil import local_name
@@ -33,7 +33,7 @@ def _priority(raw: str | None) -> int:
 def parse_metalink(text: str | bytes, allow_insecure: bool) -> Metalink:
     try:
         root = parse_xml(text)
-    except ParseError as error:
+    except XmlError as error:
         raise MetalinkError(f"malformed metalink: {error}") from error
     if local_name(root) != "metalink":
         raise MetalinkError("not a metalink document")

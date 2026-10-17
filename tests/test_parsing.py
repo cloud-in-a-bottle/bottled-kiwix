@@ -1,12 +1,19 @@
+from pathlib import Path
+
 import pytest
 
 from kiwix_manager.auth import is_owner
 from kiwix_manager.auth import is_same_origin_request
 from kiwix_manager.auth import login_url
 from kiwix_manager.catalog import parse_entries
+from kiwix_manager.catalog import parse_entry_ids
 from kiwix_manager.catalog import parse_facets
+from kiwix_manager.library import Book
 from kiwix_manager.metalink import MetalinkError
 from kiwix_manager.metalink import parse_metalink
+from kiwix_manager.routes.api import EntryStatus
+from kiwix_manager.routes.api import entry_status
+from kiwix_manager.xmlutil import XmlError
 
 ENTRIES_FEED = """<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/">
@@ -115,8 +122,19 @@ def test_parse_metalink_rejects_malformed_xml() -> None:
 
 def test_parse_metalink_rejects_entity_expansion() -> None:
     bomb = '<?xml version="1.0"?><!DOCTYPE m [<!ENTITY a "aaaa">]><metalink>&a;</metalink>'
-    with pytest.raises(Exception):  # noqa: B017 - defusedxml raises its own exception types
+    with pytest.raises(MetalinkError):
         parse_metalink(bomb, allow_insecure=False)
+
+
+def test_catalog_rejects_entity_declarations() -> None:
+    bomb = '<?xml version="1.0"?><!DOCTYPE f [<!ENTITY a "aaaa">]><feed>&a;</feed>'
+    with pytest.raises(XmlError):
+        parse_entries(bomb)
+
+
+def test_parse_entry_ids_ignores_entries_without_ids() -> None:
+    feed = '<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>urn:uuid:abc</id></entry><entry/></feed>'
+    assert parse_entry_ids(feed) == frozenset({"abc"})
 
 
 def test_is_owner_requires_exact_header() -> None:
@@ -155,3 +173,31 @@ def test_login_url_keeps_port_and_ignores_bogus_proto() -> None:
 def test_same_origin(headers: dict[str, str], expected: bool) -> None:
     base = {"x-forwarded-host": "kiwix.example.com", "x-forwarded-proto": "https"}
     assert is_same_origin_request({**base, **headers}) is expected
+
+
+def _book(book_id: str, date: str) -> Book:
+    return Book(
+        id=book_id,
+        path=Path(f"/zims/{book_id}.zim"),
+        name="wikipedia_en_100",
+        title="Wikipedia 100",
+        description="",
+        language="eng",
+        flavour="",
+        date=date,
+        size_bytes=1,
+        article_count=1,
+        media_count=1,
+    )
+
+
+def test_entry_status() -> None:
+    (entry,) = parse_entries(ENTRIES_FEED).entries
+    assert entry_status(entry, (), ()) == EntryStatus.AVAILABLE
+    assert entry_status(entry, (_book(entry.id, "2026-08-19"),), ()) == EntryStatus.INSTALLED
+    older = _book("00000000-0000-0000-0000-000000000000", "2025-01-01")
+    assert entry_status(entry, (older,), ()) == EntryStatus.UPDATE_AVAILABLE
+    undated = _book("00000000-0000-0000-0000-000000000000", "")
+    assert entry_status(entry, (undated,), ()) == EntryStatus.AVAILABLE
+    newer = _book("00000000-0000-0000-0000-000000000000", "2027-01-01")
+    assert entry_status(entry, (newer,), ()) == EntryStatus.AVAILABLE

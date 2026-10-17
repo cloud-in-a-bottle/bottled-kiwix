@@ -37,7 +37,7 @@ Some sizes for English Wikipedia, to plan disk space (they change with each rele
 ZIM files are bulky and can always be downloaded again, so they live in the archive tier, which the backup app skips
 and which the owner can move to S3. The archive is a JuiceFS mount that always reports 1 PiB of capacity, so the
 manager checks free space on the instance's real disk instead. A download that would not fit asks for confirmation
-(on an S3-backed archive the local disk is not the limit), and a running download stops if the disk gets within 2 GB
+(on an S3-backed archive the local disk is not the limit), and a running download stops if the disk gets within 2 GiB
 of full (`KIWIX_RESERVE_BYTES`), well before the platform's 500 MB storage guard stops apps. Stopped downloads can be resumed.
 
 Deleting a book does not free disk space straight away: the archive's JuiceFS volume keeps deleted files in its trash

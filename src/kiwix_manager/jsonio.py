@@ -8,7 +8,13 @@ from typing import Any
 def atomic_write_text(path: Path, text: str) -> None:
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w") as handle:
+        handle = os.fdopen(fd, "w")
+    except BaseException:
+        os.close(fd)
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+    try:
+        with handle:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())

@@ -7,6 +7,7 @@ from litestar.static_files import create_static_files_router
 
 from kiwix_manager.auth import is_owner
 from kiwix_manager.auth import login_url
+from kiwix_manager.routes.api import services_of
 from kiwix_manager.routes.types import ManagerRequest
 from kiwix_manager.services import Services
 
@@ -34,7 +35,7 @@ def manage_page(request: ManagerRequest) -> Response[str] | Redirect:
 
 @get("/_manage/healthz", sync_to_thread=False)
 def healthz(request: ManagerRequest) -> Response[dict[str, str]]:
-    services: Services = request.app.state.services
+    services: Services = services_of(request)
     if not services.kiwix.running:
         return Response(content={"status": "starting"}, status_code=503)
     return Response(content={"status": "ok"})

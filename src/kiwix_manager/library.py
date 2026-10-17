@@ -127,13 +127,16 @@ class Library:
         return parse_library(self._library_path.read_text(), self._library_path.parent.resolve())
 
     def _manage(self, library: Path, *args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [self._kiwix_manage_bin, str(library), *args],
-            capture_output=True,
-            text=True,
-            timeout=KIWIX_MANAGE_TIMEOUT_SECONDS,
-            check=False,
-        )
+        try:
+            return subprocess.run(
+                [self._kiwix_manage_bin, str(library), *args],
+                capture_output=True,
+                text=True,
+                timeout=KIWIX_MANAGE_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise LibraryError(f"could not run kiwix-manage: {error}") from error
 
     def _probe_id(self, path: Path, scratch_dir: Path) -> str | None:
         """The book id of a ZIM file, or None if kiwix-manage cannot read it."""
@@ -193,8 +196,8 @@ class Library:
             books = self._read()
             if added or removed:
                 # Deliberately under the lock: library changes are serialized, and each one is only reported once
-                # the reader serves it (normally about a second; bounded by the wait's timeout). Readers of books()
-                # are not blocked.
+                # the reader serves it. That normally takes about a second (bounded by the wait's timeout), during
+                # which other library changes wait; readers of books() are not blocked.
                 self._wait_for_server(frozenset(book.id for book in books))
                 logger.info("Library updated: added {} removed {}", added, removed)
             self._books = books

@@ -2,11 +2,11 @@ import re
 import time
 from collections.abc import Callable
 from xml.etree.ElementTree import Element
-from xml.etree.ElementTree import ParseError
 
 import attr
 import httpx
 
+from kiwix_manager.xmlutil import XmlError
 from kiwix_manager.xmlutil import child
 from kiwix_manager.xmlutil import child_text
 from kiwix_manager.xmlutil import children
@@ -112,7 +112,8 @@ def parse_entries(text: str | bytes) -> CatalogPage:
 def parse_entry_ids(text: str | bytes) -> frozenset[str]:
     """Book ids in a feed, including entries without a download link (as served for a local library)."""
     root = parse_xml(text)
-    return frozenset(child_text(element, "id").removeprefix("urn:uuid:") for element in children(root, "entry"))
+    ids = (child_text(element, "id").removeprefix("urn:uuid:") for element in children(root, "entry"))
+    return frozenset(book_id for book_id in ids if book_id)
 
 
 def parse_facets(text: str | bytes, value_element: str) -> tuple[Facet, ...]:
@@ -131,7 +132,7 @@ def parse_facets(text: str | bytes, value_element: str) -> tuple[Facet, ...]:
 def _parse[T](parser: Callable[[str | bytes], T], text: str | bytes) -> T:
     try:
         return parser(text)
-    except ParseError as error:
+    except XmlError as error:
         raise CatalogError(f"the Kiwix catalog returned malformed XML: {error}") from error
 
 
