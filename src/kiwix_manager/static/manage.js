@@ -93,7 +93,9 @@ function renderBooks() {
     const button = node.querySelector('[data-action="delete"]');
     button.setAttribute("aria-label", `Delete ${book.title}`);
     button.addEventListener("click", async () => {
-      if (!window.confirm(`Delete "${book.title}" (${formatBytes(book.size_bytes)}) from this instance?`)) return;
+      const message = `Delete "${book.title}" (${formatBytes(book.size_bytes)}) from this instance?\n\n`
+        + "Archive storage keeps deleted files in its trash for about a day, so the disk space comes back after that.";
+      if (!window.confirm(message)) return;
       button.disabled = true;
       try {
         await api(`/books/${encodeURIComponent(book.id)}`, { method: "DELETE" });

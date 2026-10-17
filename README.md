@@ -40,6 +40,10 @@ manager checks free space on the instance's real disk instead. A download that w
 (on an S3-backed archive the local disk is not the limit), and a running download stops if the disk gets within 2 GB
 of full (`KIWIX_RESERVE_BYTES`), well before the platform's 500 MB storage guard stops apps. Stopped downloads can be resumed.
 
+Deleting a book does not free disk space straight away: the archive's JuiceFS volume keeps deleted files in its trash
+for a day (`TrashDays = 1`). JuiceFS also keeps a local read cache (`~/.juicefs` on the host), so reading a large book
+uses extra local disk on top of the book itself; JuiceFS stops caching when the disk is 90% full.
+
 On an S3-backed archive, the first read of each part of a ZIM file is slower; full-text search touches many parts of
 the file, so it is noticeably slower until the JuiceFS cache warms up.
 
