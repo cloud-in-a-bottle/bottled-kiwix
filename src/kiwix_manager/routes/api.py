@@ -17,6 +17,7 @@ from litestar.params import FromPath
 from litestar.params import FromQuery
 from litestar.status_codes import HTTP_409_CONFLICT
 from litestar.status_codes import HTTP_502_BAD_GATEWAY
+from loguru import logger
 
 from kiwix_manager.auth import is_owner
 from kiwix_manager.auth import is_same_origin_request
@@ -32,6 +33,8 @@ from kiwix_manager.library import LibraryError
 from kiwix_manager.library import SkippedFile
 from kiwix_manager.metalink import MetalinkError
 from kiwix_manager.metalink import parse_metalink
+from kiwix_manager.presets import PRESETS
+from kiwix_manager.presets import Preset
 from kiwix_manager.routes.types import ManagerConnection
 from kiwix_manager.routes.types import ManagerRequest
 from kiwix_manager.services import Services
@@ -210,6 +213,48 @@ async def catalog(
     )
 
 
+@attr.s(auto_attribs=True, frozen=True)
+class PresetView:
+    key: str
+    label: str
+    description: str
+    # None when the catalog could not be reached or no longer lists this book.
+    entry: CatalogEntry | None
+    status: EntryStatus
+
+
+async def _resolve_preset(services: Services, preset: Preset) -> CatalogEntry | None:
+    try:
+        entries = await services.catalog.by_name(preset.name)
+    except CatalogError as error:
+        logger.warning("Could not resolve preset {}: {}", preset.key, error)
+        return None
+    matching = [entry for entry in entries if entry.flavour == preset.flavour]
+    return max(matching, key=lambda entry: entry.issued, default=None)
+
+
+@get("/presets")
+async def presets(request: ManagerRequest) -> tuple[PresetView, ...]:
+    services = services_of(request)
+    entries = await asyncio.gather(*(_resolve_preset(services, preset) for preset in PRESETS))
+    books = services.library.books()
+    jobs = services.downloads.jobs()
+    views: list[PresetView] = []
+    for preset, entry in zip(PRESETS, entries, strict=True):
+        status = EntryStatus.AVAILABLE
+        if entry is not None:
+            status = entry_status(entry, books, jobs)
+            # Any installed edition counts: an older release is offered as an update, not a fresh download.
+            if status == EntryStatus.AVAILABLE and any(
+                book.name == preset.name and book.flavour == preset.flavour for book in books
+            ):
+                status = EntryStatus.INSTALLED
+        views.append(
+            PresetView(key=preset.key, label=preset.label, description=preset.description, entry=entry, status=status)
+        )
+    return tuple(views)
+
+
 @get("/catalog/languages")
 async def languages(request: ManagerRequest) -> tuple[Facet, ...]:
     try:
@@ -345,6 +390,7 @@ api_router = Router(
         languages,
         categories,
         illustration,
+        presets,
         start_download,
         cancel_download,
         retry_download,

@@ -92,7 +92,8 @@ def _make_handler(behaviour: FileServerBehaviour) -> type[BaseHTTPRequestHandler
         def do_GET(self) -> None:
             range_header = self.headers.get("Range")
             behaviour.requests.append((self.path, range_header))
-            path = self.path.split("?", 1)[0]
+            # Routes can be keyed by the exact path and query, or by the path alone.
+            path = self.path if self.path in behaviour.routes else self.path.split("?", 1)[0]
             if path in behaviour.routes:
                 content_type, body = behaviour.routes[path]
                 self.send_response(200)
