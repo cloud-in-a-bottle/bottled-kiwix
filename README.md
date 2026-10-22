@@ -13,9 +13,11 @@ The app runs the official `kiwix-serve` and puts a small library manager in fron
 
 ## Using it
 
-Deploy the repo from the dashboard. Open the app and you are sent to the manager (`/_manage/`, also linked from the
-app's dashboard page as "Manage library"). Pick something to download; once it finishes it appears on the library page
-at `/`.
+Deploy `https://github.com/cloud-in-a-bottle/bottled-kiwix` from the dashboard and open the app. You land on the
+manager (`/_manage/`, also linked from the app's dashboard page as "Manage library"), which has one-click buttons for
+the common libraries: Wikipedia in several sizes, Simple English Wikipedia, Wiktionary, Wikivoyage, Wikiquote,
+Wikibooks, iFixit, Stack Overflow and Project Gutenberg. Everything else in the Kiwix catalog is under "Browse
+everything". Once a download finishes it appears on the library page at `/`.
 
 Some sizes for English Wikipedia, to plan disk space (they change with each release):
 

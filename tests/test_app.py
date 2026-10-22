@@ -67,6 +67,14 @@ async def stack(
     )
     routes = file_server.behaviour.routes
     routes["/catalog/v2/entries"] = ("application/atom+xml", feed.encode())
+    # One preset ("Wikipedia: top 100") resolves to the test book; the rest are missing from this fake catalog.
+    preset_entry = entry.replace("<name>wikipedia_en_ray-charles</name>", "<name>wikipedia_en_100</name>").replace(
+        "<flavour>mini</flavour>", "<flavour></flavour>"
+    )
+    routes["/catalog/v2/entries?name=wikipedia_en_100&count=50"] = (
+        "application/atom+xml",
+        feed.replace(entry, preset_entry).encode(),
+    )
     # The real single-entry endpoint omits its namespace declarations; reproduce that.
     routes[f"/catalog/v2/entry/{TEST_ZIM_ID}"] = ("application/atom+xml", f'<?xml version="1.0"?>\n{entry}'.encode())
     routes[f"/catalog/v2/entry/{OTHER_ID}"] = (
@@ -307,3 +315,20 @@ async def _wait_for_job(client: httpx.AsyncClient, job_id: str, statuses: set[st
             return job
         await asyncio.sleep(0.1)
     raise AssertionError(f"job never reached {statuses}: {job}")
+
+
+async def test_preset_buttons(stack: Stack) -> None:
+    client = stack.client
+    presets = (await client.get("/_manage/api/presets", headers=OWNER)).json()
+    by_key = {preset["key"]: preset for preset in presets}
+    assert by_key["wikipedia-top"]["entry"]["id"] == TEST_ZIM_ID
+    assert by_key["wikipedia-top"]["status"] == "available"
+    # Books the catalog does not list are reported as unavailable rather than failing the whole list.
+    assert by_key["wikipedia-maxi"]["entry"] is None
+    assert (await client.get("/_manage/api/presets", headers=ANONYMOUS)).status_code == 401
+
+    started = await client.post("/_manage/api/downloads", json={"book_id": TEST_ZIM_ID}, headers=OWNER_WRITE)
+    assert started.status_code == 201
+    await _wait_for_job(client, started.json()["id"], {"completed"})
+    presets = (await client.get("/_manage/api/presets", headers=OWNER)).json()
+    assert {preset["key"]: preset["status"] for preset in presets}["wikipedia-top"] == "installed"

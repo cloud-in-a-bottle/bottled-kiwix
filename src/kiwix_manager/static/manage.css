@@ -185,3 +185,28 @@ select { max-width: 220px; }
   select { max-width: none; }
   .field { flex: 1 1 140px; }
 }
+
+.presets {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.preset {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+
+.preset button { margin-top: auto; align-self: flex-start; }
+.preset .item-meta:empty { display: none; }
+
+details > summary { cursor: pointer; list-style: revert; }
+details > summary h2 { display: inline; }
+details[open] > summary { margin-bottom: 12px; }

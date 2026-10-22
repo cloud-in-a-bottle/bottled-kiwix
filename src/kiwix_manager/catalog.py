@@ -150,6 +150,7 @@ class CatalogClient:
         self._base_url = base_url
         self._client = client
         self._facet_cache: dict[str, tuple[float, tuple[Facet, ...]]] = {}
+        self._name_cache: dict[str, tuple[float, tuple[CatalogEntry, ...]]] = {}
 
     async def _get(self, path: str, params: dict[str, str] | None = None) -> httpx.Response:
         try:
@@ -170,6 +171,16 @@ class CatalogClient:
             params["category"] = category
         response = await self._get("/catalog/v2/entries", params)
         return _parse(parse_entries, response.content)
+
+    async def by_name(self, name: str) -> tuple[CatalogEntry, ...]:
+        """Every catalog entry (all flavours) for a book name, cached because the preset buttons ask often."""
+        cached = self._name_cache.get(name)
+        if cached is not None and time.monotonic() - cached[0] < FACET_CACHE_SECONDS:
+            return cached[1]
+        response = await self._get("/catalog/v2/entries", {"name": name, "count": "50"})
+        entries = tuple(entry for entry in _parse(parse_entries, response.content).entries if entry.name == name)
+        self._name_cache[name] = (time.monotonic(), entries)
+        return entries
 
     async def entry(self, book_id: str) -> CatalogEntry:
         if not BOOK_ID_RE.match(book_id):

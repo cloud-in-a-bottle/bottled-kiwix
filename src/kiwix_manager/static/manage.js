@@ -11,6 +11,8 @@ let state = null;
 let searchStart = 0;
 let lastResults = null;
 let pollTimer = null;
+let presets = null;
+let catalogLoaded = false;
 
 const $ = (id) => document.getElementById(id);
 
@@ -178,14 +180,77 @@ function renderAccess() {
   $("access-hint").textContent = state.public
     ? "Anyone who knows this address can read the library. Managing it still requires your login."
     : "Only you can read the library.";
-  $("storage-line").textContent = `${formatBytes(state.free_bytes)} free on this instance's disk. Downloads stop if less than ${formatBytes(state.reserve_bytes)} would be left.`;
+  $("storage-line").textContent = `${formatBytes(state.free_bytes)} free on this instance's disk.`;
 }
 
 function render() {
   renderAccess();
   renderDownloads();
   renderBooks();
+  if (presets) renderPresets();
   if (lastResults) renderResults(lastResults);
+}
+
+function renderPresets() {
+  const list = $("presets");
+  list.replaceChildren();
+  let unavailable = 0;
+  for (const preset of presets) {
+    const entry = preset.entry;
+    const node = fill("preset-template", {
+      label: preset.label,
+      description: preset.description,
+      meta: entry ? `${formatBytes(entry.size_bytes)} · ${entry.issued}` : "",
+    });
+    const button = node.querySelector('[data-action="download"]');
+    if (!entry) {
+      unavailable += 1;
+      button.textContent = "Unavailable";
+      button.disabled = true;
+    } else {
+      const view = { entry, status: liveStatus({ entry, status: preset.status }) };
+      if (view.status === "available" && state) {
+        const editions = state.books.filter((book) => book.name === entry.name && book.flavour === entry.flavour);
+        if (editions.length) {
+          view.status = editions.every((book) => book.date && book.date < entry.issued) ? "update_available" : "installed";
+        }
+      }
+      const fits = !state || entry.size_bytes + state.reserve_bytes <= state.free_bytes;
+      button.textContent = {
+        installed: "Installed",
+        downloading: "Downloading…",
+        update_available: "Update",
+      }[view.status] || (fits ? "Download" : "Download (too big?)");
+      if (view.status === "available" && !fits) button.className = "secondary";
+      button.disabled = view.status === "installed" || view.status === "downloading";
+      button.setAttribute("aria-label", `${button.textContent}: ${preset.label}`);
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try {
+          await startDownload(entry);
+          clearError();
+        } catch (error) {
+          showError(error);
+        }
+        await refresh();
+      });
+    }
+    list.append(node);
+  }
+  $("presets-status").hidden = unavailable === 0;
+  $("presets-status").textContent = unavailable === presets.length
+    ? "Could not reach the Kiwix catalog. Check the instance's internet connection and reload."
+    : "";
+}
+
+async function loadPresets() {
+  try {
+    presets = await api("/presets");
+    renderPresets();
+  } catch (error) {
+    $("presets-status").textContent = "Could not load the library list.";
+    showError(error);
+  }
 }
 
 async function refresh() {
@@ -214,7 +279,7 @@ function entryButtonLabel(view) {
 }
 
 function liveStatus(view) {
-  // The catalog page was fetched earlier; reflect downloads and installs that happened since.
+  // The catalog was fetched earlier; reflect downloads and installs that happened since.
   if (!state) return view.status;
   if (state.downloads.some((job) => job.book_id === view.entry.id && ["queued", "downloading", "verifying"].includes(job.status))) {
     return "downloading";
@@ -229,8 +294,8 @@ async function startDownload(entry) {
   } catch (error) {
     if (error.code !== "insufficient_space") throw error;
     const proceed = window.confirm(
-      `${error.message}\n\nIf your archive storage is backed by S3 the local disk is not the limit and you can go ahead. `
-      + "Otherwise the download will stop when the disk is nearly full.\n\nDownload anyway?",
+      `${entry.title} (${formatBytes(entry.size_bytes)}) probably won't fit: ${error.message}\n\n`
+      + "Download anyway? Only do this if your archive storage is on S3; otherwise it will stop when the disk is nearly full.",
     );
     if (!proceed) return;
     await api("/downloads", { method: "POST", body: { book_id: entry.id, ignore_space_check: true } });
@@ -350,7 +415,13 @@ document.addEventListener("DOMContentLoaded", async () => {
       button.disabled = false;
     }
   });
+  // Load the full catalog only when someone opens "Browse everything".
+  $("browse").addEventListener("toggle", async () => {
+    if (!$("browse").open || catalogLoaded) return;
+    catalogLoaded = true;
+    await loadFacets();
+    await search(0);
+  });
   await refresh();
-  await loadFacets();
-  await search(0);
+  await loadPresets();
 });

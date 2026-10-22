@@ -17,6 +17,13 @@
   <main>
     <div id="banner" class="banner" role="alert" hidden></div>
 
+    <section aria-labelledby="quick-heading" class="card">
+      <h2 id="quick-heading">Add a library</h2>
+      <p class="hint" id="storage-line"></p>
+      <p class="hint" id="presets-status" aria-live="polite">Loading…</p>
+      <ul class="presets" id="presets"></ul>
+    </section>
+
     <section aria-labelledby="access-heading" class="card">
       <h2 id="access-heading">Access</h2>
       <label class="toggle">
@@ -24,7 +31,6 @@
         <span>Anyone with the link can read this library</span>
       </label>
       <p class="hint" id="access-hint">Only you can read the library.</p>
-      <p class="hint" id="storage-line"></p>
     </section>
 
     <section aria-labelledby="downloads-heading" class="card" id="downloads-section" hidden>
@@ -37,13 +43,14 @@
         <h2 id="library-heading">In your library</h2>
         <button type="button" class="secondary small" id="rescan">Rescan files</button>
       </div>
-      <p class="hint" id="library-empty">Nothing yet. Find something to download below.</p>
+      <p class="hint" id="library-empty">Nothing yet. Pick a library above.</p>
       <ul class="list" id="books"></ul>
       <p class="hint warning" id="skipped-files" hidden></p>
     </section>
 
-    <section aria-labelledby="catalog-heading" class="card">
-      <h2 id="catalog-heading">Get content</h2>
+    <details class="card" id="browse">
+      <summary><h2 id="catalog-heading">Browse everything</h2></summary>
+      <p class="hint">Thousands more libraries in every language: other Wikipedias, Stack Exchange sites, TED talks, and more.</p>
       <form id="search-form" class="search" role="search">
         <label class="field grow">
           <span>Search</span>
@@ -66,8 +73,16 @@
         <button type="button" class="secondary" id="next-page" hidden>Next</button>
       </div>
       <p class="hint">Content comes from the <a href="https://library.kiwix.org/" rel="noopener noreferrer">Kiwix catalog</a>. Every download is checked against its published SHA-256 checksum.</p>
-    </section>
+    </details>
   </main>
+  <template id="preset-template">
+    <li class="preset">
+      <span class="item-title" data-field="label"></span>
+      <span class="item-meta" data-field="description"></span>
+      <span class="item-meta" data-field="meta"></span>
+      <button type="button" data-action="download"></button>
+    </li>
+  </template>
   <template id="book-template">
     <li class="item">
       <div class="item-main">
